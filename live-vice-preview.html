@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>C64 VICE benchmark</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 2rem auto; padding: 0 1rem; max-width: 80rem; background: #14131c; color: #eeedf4; font: 1rem system-ui, sans-serif; }
+  h1 { font-size: 1.4rem; }
+  #screens { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(22rem, 100%), 1fr)); gap: 1rem; }
+  figure { margin: 0; background: #211f2d; }
+  canvas { display: block; width: 100%; height: auto; image-rendering: pixelated; background: #0b0a10; }
+  figcaption { padding: .65rem .8rem; overflow-wrap: anywhere; }
+</style>
+<h1>C64 VICE benchmark</h1>
+<p id="status" aria-live="polite">Waiting for the benchmark workers.</p>
+<main id="screens"></main>
+<script type="module">
+  const status = document.querySelector('#status');
+  const screens = document.querySelector('#screens');
+  const routes = await (await fetch('/workers')).json();
+  const workers = routes.map(route => {
+    const figure = document.createElement('figure');
+    const canvas = document.createElement('canvas');
+    canvas.width = 392;
+    canvas.height = 272;
+    const caption = document.createElement('figcaption');
+    caption.textContent = 'Waiting for an original case';
+    figure.append(canvas, caption);
+    screens.append(figure);
+    return {route, canvas, caption, context: canvas.getContext('2d')};
+  });
+  const decoder = new TextDecoder();
+  async function draw(worker) {
+    const result = await fetch(worker.route);
+    if (result.status === 204) return;
+    if (!result.ok) throw new Error('Frame unavailable');
+    const bytes = new Uint8Array(await result.arrayBuffer());
+    const end = bytes.indexOf(10);
+    const {index, line, width, height, palette} = JSON.parse(decoder.decode(bytes.subarray(0, end)));
+    if (width !== worker.canvas.width || height !== worker.canvas.height) {
+      worker.canvas.width = width;
+      worker.canvas.height = height;
+    }
+    const image = worker.context.createImageData(width, height);
+    for (let pixel = 0; pixel < width * height; pixel++) {
+      const color = palette[bytes[end + 1 + pixel]];
+      image.data.set(color, pixel * 4);
+      image.data[pixel * 4 + 3] = 255;
+    }
+    worker.context.putImageData(image, 0, 0);
+    worker.caption.textContent = `Original ${index} · ${line?.split(',').slice(0, 2).join(' ') ?? ''}`;
+    status.textContent = '';
+  }
+  async function poll() {
+    try {
+      await Promise.all(workers.map(draw));
+      setTimeout(poll, 125);
+    } catch {
+      status.textContent = 'Preview disconnected. Check the terminal for benchmark results.';
+    }
+  }
+  poll();
+</script>
+</html>
